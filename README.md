@@ -6,6 +6,16 @@
 - [A map through the three major coroutine series - Old New Thing](https://devblogs.microsoft.com/oldnewthing/20210504-01/?p=105178)
 - [Deciphering C++ Coroutines - A Diagrammatic Coroutine Cheat Sheet - Andreas Weis - CppCon 2022](https://www.youtube.com/watch?v=J7fYddslH0Q)
 
+## Cheat Sheet
+
+From [Deciphering C++ Coroutines - A Diagrammatic Coroutine Cheat Sheet - Andreas Weis](https://www.youtube.com/watch?v=J7fYddslH0Q).
+
+![Start/Stop](figures/start_stop.png)
+
+![Awaitable](figures/awaitable.png)
+
+![Map_of_Coroutines](figures/map_of_coroutine_land.png)
+
 ## Stackful
 
 - [Stackful Coroutines](https://www.boost.org/doc/libs/1_83_0/doc/html/boost_asio/overview/composition/spawn.html)
