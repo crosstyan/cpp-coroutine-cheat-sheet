@@ -36,33 +36,71 @@ namespace co {
 template <typename T>
 	requires std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T>
 struct box {
-	bool has_value;
-	T _value;
+	struct promise_type;
+	using Handle = std::coroutine_handle<promise_type>;
 
+	/** constructor etc. */
+	explicit box(const Handle coroutine) : _m_coroutine(coroutine) {}
+	box() = default;
+	~box() {
+		if (_m_coroutine) {
+			_m_coroutine.destroy();
+		}
+	}
+	box(const box &)            = delete;
+	box &operator=(const box &) = delete;
+	box(box &&other) noexcept : _m_coroutine{other._m_coroutine} {
+		other._m_coroutine = {};
+	}
+	box &operator=(box &&other) noexcept {
+		if (this != &other) {
+			if (_m_coroutine) {
+				_m_coroutine.destroy();
+			}
+			_m_coroutine       = other._m_coroutine;
+			other._m_coroutine = {};
+		}
+		return *this;
+	}
+
+	/** promise type implementation */
 	struct promise_type {
-		std::optional<T> inner;
-
 		std::suspend_never initial_suspend() noexcept { return {}; }
-		std::suspend_never final_suspend() noexcept { return {}; }
+		/**
+		 * @brief  https://stackoverflow.com/questions/70532488/what-is-the-best-way-to-return-value-from-promise-type
+		 */
+		std::suspend_always final_suspend() noexcept { return {}; }
 
+		/**
+		 * @see https://devblogs.microsoft.com/oldnewthing/20210407-00/?p=105061
+		 * @see https://devblogs.microsoft.com/oldnewthing/20210406-00/?p=105057
+		 */
 		void return_value(T value) {
-			this->inner = value;
+			std::println("return_value: {}", value);
+			inner = value;
 		}
 		auto get_return_object() -> box<T> {
-			if (this->inner) {
-				return box{true, this->inner.value()};
-			}
-			return box{false, T{}};
+			std::println("get_return_object");
+			return box{Handle::from_promise(*this)};
 		};
-		void unhandled_exception() { /** do nothing */ }
+		[[noreturn]]
+		void unhandled_exception() { throw; }
+
+		/** properties */
+		std::optional<T> inner;
 	};
 
-	T &value() {
-		if (not has_value) {
-			throw std::logic_error{"not found"};
+	std::optional<T> get() {
+		if (not _m_coroutine) {
+			throw std::logic_error{"no handle"};
 		}
-		return _value;
+		return _m_coroutine.promise().inner;
 	}
+
+private:
+	/** properties */
+	Handle _m_coroutine;
+	/** end of properties */
 };
 
 box<int> f() {
@@ -72,6 +110,7 @@ box<int> f() {
 
 
 int main() {
-	auto f = co::f();
-	std::println("{}", f.value());
+	auto b = co::f();
+	std::println("coroutine return");
+	std::println("{}", b.get().value_or(0));
 }

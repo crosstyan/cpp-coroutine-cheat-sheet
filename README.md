@@ -10,6 +10,7 @@
 - [P0912R5 - コルーチン](https://cpprefjp.github.io/lang/cpp20/coroutines.html)
 - [N4024 - Distinguishing coroutines and fibers](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4024.pdf)
 - [P1365R0 - Using Coroutine TS with zero dynamic allocations](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p1365r0.pdf)
+- [C++20 coroutines without heap allocation](https://pigweed.dev/docs/blog/05-coroutines.html)
 
 ## Talk
 
@@ -43,6 +44,8 @@ From [Deciphering C++ Coroutines - A Diagrammatic Coroutine Cheat Sheet - Andrea
 ## Others
 
 - [folly/io/async](https://github.com/facebook/folly/blob/main/folly/io/async/README.md)
+- [operator new](https://en.cppreference.com/w/cpp/memory/new/operator_new)
+- [operator delete](https://en.cppreference.com/w/cpp/memory/new/operator_delete)
 
 ## Python
 
