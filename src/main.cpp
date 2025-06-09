@@ -33,7 +33,39 @@ struct std::coroutine_traits<std::future<R>, Args...> {
 };
 
 namespace co {
-std::future<int> f() {
+template <typename T>
+	requires std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T>
+struct box {
+	bool has_value;
+	T _value;
+
+	struct promise_type {
+		std::optional<T> inner;
+
+		std::suspend_never initial_suspend() noexcept { return {}; }
+		std::suspend_never final_suspend() noexcept { return {}; }
+
+		void return_value(T value) {
+			this->inner = value;
+		}
+		auto get_return_object() -> box<T> {
+			if (this->inner) {
+				return box{true, this->inner.value()};
+			}
+			return box{false, T{}};
+		};
+		void unhandled_exception() { /** do nothing */ }
+	};
+
+	T &value() {
+		if (not has_value) {
+			throw std::logic_error{"not found"};
+		}
+		return _value;
+	}
+};
+
+box<int> f() {
 	co_return 42;
 }
 }
@@ -41,5 +73,5 @@ std::future<int> f() {
 
 int main() {
 	auto f = co::f();
-	std::println("{}", f.get());
+	std::println("{}", f.value());
 }
