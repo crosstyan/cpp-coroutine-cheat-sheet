@@ -47,8 +47,27 @@ static VOID CALLBACK timer_callback(PVOID lpParameter, BOOLEAN TimerOrWaitFired)
 	std::ignore = TimerOrWaitFired;
 	_millis_c++;
 }
+#endif
 
+/**
+ * @note This is a C++ static constructor pattern: the lambda runs once before `main()`,
+ * functionally equivalent to the `init` function in Go.
+ *
+ * In standard hosted C++, static (global/namespace-scope) variable initialization is guaranteed
+ * to run before entering `main()`. This allows "setup code" to be executed automatically,
+ * without an explicit call from user code.
+ *
+ * **Embedded systems note:**
+ * On some embedded toolchains (bare-metal/RTOS), static/global initializers **may be omitted**
+ * if the linker script/startup code does not properly handle `.init_array` or equivalent sections.
+ * Always verify startup files and linker scripts ensure that C++ global constructors are called.
+ *
+ * @see https://go.dev/doc/effective_go#init
+ * @see https://developer.arm.com/documentation/dui0808/b/Chdfiffc
+ * @see https://docs.oracle.com/cd/E19683-01/816-7777/6mdorm6is/index.html
+ */
 static std::monostate _ = [] -> std::monostate {
+#ifdef _WIN32
 	HANDLE hTimer      = nullptr;
 	HANDLE hTimerQueue = CreateTimerQueue();
 	if (hTimerQueue == nullptr) {
@@ -61,9 +80,7 @@ static std::monostate _ = [] -> std::monostate {
 	}
 
 	return {};
-}();
 #else
-static std::monostate _ = [] -> std::monostate {
 	struct sigaction sa;
 	constexpr auto timer_callback = [](int sig) {
 		std::ignore = sig;
@@ -87,8 +104,8 @@ static std::monostate _ = [] -> std::monostate {
 	}
 
 	return {};
-}();
 #endif
+}();
 
 static uint64_t millis() {
 	return _millis_c;

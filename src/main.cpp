@@ -181,5 +181,4 @@ int main() {
 	std::println("coroutine return");
 	std::println("{}", b.get().value_or(0));
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	std::println("now: {}", app::timer::monotonic_clock::now().time_since_epoch().count());
 }
