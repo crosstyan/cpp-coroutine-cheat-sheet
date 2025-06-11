@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <format>
 #include <future>
 #include <coroutine>
 #include <iostream>
 #include <variant>
+#include <vector>
 #include "app_timer.hpp"
 
 
@@ -173,12 +175,40 @@ box_shared<int> f() {
  * we haven't touch awaitable yet
  * @see https://devblogs.microsoft.com/oldnewthing/20191209-00/?p=103195
  */
+
+struct simple_scheduler {
+	/**
+	 * @note Specialization std::coroutine_handle<void> erases the promise type.
+	 * It is convertible from other specializations.
+	 * @see https://en.cppreference.com/w/cpp/coroutine/coroutine_handle
+	 */
+	std::vector<std::coroutine_handle<>> _m_conts;
+
+	simple_scheduler() = default;
+
+	void schedule(std::coroutine_handle<> cont) {
+		_m_conts.emplace_back(cont);
+	}
+
+	/**
+	 * @note should be called in a loop
+	 */
+	void iterate() {
+		for (auto &cont : _m_conts) {
+			if (cont.done()) {
+				_m_conts.erase(std::ranges::remove(_m_conts, cont).begin(), _m_conts.end());
+			} else {
+				cont.resume();
+			}
+		}
+	};
+};
 }
 
-
 int main() {
+	co::simple_scheduler scheduler{};
+
 	auto b = co::f();
 	std::println("coroutine return");
 	std::println("{}", b.get().value_or(0));
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
