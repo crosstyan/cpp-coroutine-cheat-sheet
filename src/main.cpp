@@ -3,6 +3,7 @@
 #include <future>
 #include <coroutine>
 #include <iostream>
+#include <type_traits>
 #include <variant>
 #include <vector>
 #include "app_timer.hpp"
@@ -107,22 +108,36 @@ private:
 	/** end of properties */
 };
 
-
 template <typename T>
-	requires std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T>
-struct box_shared {
+	requires std::is_arithmetic_v<T> &&
+			 std::is_default_constructible_v<T> &&
+			 std::is_trivially_copyable_v<T>
+struct accumulator {
 	struct promise_type;
 	using Handle = std::coroutine_handle<promise_type>;
 
 	/** constructor etc. */
-	explicit box_shared(std::shared_ptr<T> content) : _content(std::move(content)) {}
-	~box_shared()                             = default;
-	box_shared(const box_shared &)            = delete;
-	box_shared &operator=(const box_shared &) = delete;
-	box_shared(box_shared &&other) noexcept : _content(std::move(other._content)) {}
-	box_shared &operator=(box_shared &&other) noexcept {
+	explicit accumulator(std::shared_ptr<T> content, Handle handle) : _content(std::move(content)), _m_coroutine(handle) {}
+	~accumulator() {
+		if (_m_coroutine) {
+			_m_coroutine.destroy();
+		}
+	};
+	accumulator(const accumulator &)            = delete;
+	accumulator &operator=(const accumulator &) = delete;
+	accumulator(accumulator &&other) noexcept : _content(std::move(other._content)), _m_coroutine(other._m_coroutine) {
+		other._m_coroutine = {};
+		other._content     = {};
+	}
+	accumulator &operator=(accumulator &&other) noexcept {
 		if (this != &other) {
-			_content = std::move(other._content);
+			if (_m_coroutine) {
+				_m_coroutine.destroy();
+			}
+			_m_coroutine       = other._m_coroutine;
+			_content           = std::move(other._content);
+			other._m_coroutine = {};
+			other._content     = {};
 		}
 		return *this;
 	}
@@ -132,15 +147,36 @@ struct box_shared {
 		std::suspend_never initial_suspend() noexcept { return {}; }
 		/**
 		 * @note automatic cleanup
+		 * @note use `suspend_always` if you need the coroutine frame not being
+		 * destroyed
 		 */
-		std::suspend_never final_suspend() noexcept { return {}; }
+		std::suspend_always final_suspend() noexcept { return {}; }
 
-		void return_value(T value) {
-			*_promise_content = value;
+		template <std::convertible_to<T> From>
+		std::suspend_always yield_value(From &&from) {
+			*_promise_content += std::forward<From>(from);
+			return {};
 		}
-		auto get_return_object() -> box_shared<T> {
+
+		/**
+		 * filled after `get_return_object` is called
+		 */
+		void return_value(T value) {
+			*_promise_content += value;
+		}
+
+		/**
+		 * when `co_return` is used, the `get_return_object` is called
+		 *
+		 * after that the `return_value` would be called
+		 * (the target of `co_return` would be the parameter of `return_value`)
+		 *
+		 * so first the `return_object` needs to be contructed
+		 * (which hasn't existed yet)
+		 */
+		auto get_return_object() -> accumulator<T> {
 			_promise_content = std::make_shared<T>();
-			return box_shared{_promise_content};
+			return accumulator{_promise_content, Handle::from_promise(*this)};
 		};
 		[[noreturn]]
 		void unhandled_exception() { throw; }
@@ -160,14 +196,42 @@ struct box_shared {
 		}
 		return *_content;
 	}
+	/**
+	 * @brief resume the coroutine
+	 * @return true if the coroutine is not done
+	 * @return false if the coroutine is done
+	 */
+	bool resume() {
+		if (not _m_coroutine) {
+			return false;
+		}
+		if (_m_coroutine.done()) {
+			_m_coroutine.destroy();
+			_m_coroutine = {};
+			return false;
+		}
+		_m_coroutine.resume();
+		return true;
+	}
 
 private:
 	/** properties */
 	std::shared_ptr<T> _content;
+	Handle _m_coroutine;
 	/** end of properties */
 };
 
-box_shared<int> f() {
+accumulator<int> f() {
+	co_yield 1;
+	co_yield 2;
+	co_yield 3;
+	co_yield 4;
+	co_yield 5;
+	co_yield 6;
+	co_yield 7;
+	co_yield 8;
+	co_yield 9;
+	co_yield 10;
 	co_return 42;
 }
 
@@ -206,9 +270,10 @@ struct simple_scheduler {
 }
 
 int main() {
-	co::simple_scheduler scheduler{};
-
 	auto b = co::f();
-	std::println("coroutine return");
 	std::println("{}", b.get().value_or(0));
+	while (b.resume()) {
+		std::println("{}", b.get().value_or(0));
+	}
+	std::println("done");
 }
