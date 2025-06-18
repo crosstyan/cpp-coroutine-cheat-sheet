@@ -7,6 +7,7 @@
 #include <deque>
 #include <type_traits>
 #include <vector>
+#include <memory>
 #include "app_timer.hpp"
 
 namespace std {
@@ -78,6 +79,35 @@ struct simple_scheduler {
 	 */
 	std::deque<coro_handle> _m_conts;
 
+	// generic event list
+	struct poll_event { // NOLINT(cppcoreguidelines-special-member-functions) virtual interface
+		coro_handle handle;
+		[[nodiscard]]
+		virtual bool poll_ready() const = 0; // true when event is ready
+		virtual ~poll_event()           = default;
+	};
+	std::vector<std::unique_ptr<poll_event>> _events;
+
+	void add_event(std::unique_ptr<poll_event> ev) {
+		_events.emplace_back(std::move(ev));
+	}
+
+	void poll_events() {
+		auto it = _events.begin();
+		while (it != _events.end()) {
+			if ((*it)->poll_ready()) {
+				// move ready coroutine to run queue
+				_m_conts.emplace_back((*it)->handle);
+				it = _events.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+
+	[[nodiscard]]
+	bool events_empty() const noexcept { return _events.empty(); }
+
 	simple_scheduler() = default;
 
 	void push_back(coro_handle h) {
@@ -110,22 +140,8 @@ struct simple_scheduler {
 		}
 	};
 
-	/**
-	 * @brief run the coroutine and ONLY remove the done ones
-	 */
-	void run_only_remove_done() {
-		std::vector<coro_handle> to_remove{};
-		for (auto &cont : _m_conts) {
-			if (cont.done()) {
-				to_remove.emplace_back(cont);
-			} else {
-				cont.resume();
-			}
-		}
-		for (auto &cont : to_remove) {
-			_m_conts.erase(std::ranges::remove(_m_conts, cont).begin(), _m_conts.end());
-		}
-	}
+	[[nodiscard]]
+	bool done() const noexcept { return _m_conts.empty() && _events.empty(); }
 };
 
 
@@ -278,30 +294,18 @@ struct delay_awaitable {
 	using Handle     = std::coroutine_handle<>;
 	using time_point = app::timer::monotonic_clock::time_point;
 
-	// ------------------------------------------------------------------
-	// global sleep-list management (kept inside the awaitable type itself)
-	// ------------------------------------------------------------------
-	static inline std::vector<std::pair<time_point, Handle>> _sleepers{};
-
-	static void tick() {
-		auto now = app::timer::monotonic_clock::now();
-		auto &q  = scheduler;
-		auto it  = _sleepers.begin();
-		while (it != _sleepers.end()) {
-			if (now >= it->first) {
-				q.push_back(it->second);
-				it = _sleepers.erase(it);
-			} else {
-				++it;
-			}
+	struct timer_event : simple_scheduler::poll_event {
+		time_point deadline;
+		timer_event(time_point d, Handle h) : deadline(d) {
+			handle = h;
 		}
-	}
+		[[nodiscard]]
+		bool poll_ready() const override {
+			return app::timer::monotonic_clock::now() >= deadline;
+		}
+	};
 
-	static bool pending() { return not _sleepers.empty(); }
-
-	// ------------------------------------------------------------------
-	// instance part
-	// ------------------------------------------------------------------
+	// instance state
 	time_point deadline;
 
 	[[nodiscard]]
@@ -313,9 +317,10 @@ struct delay_awaitable {
 
 	bool await_suspend(Handle h) {
 		if (is_ready()) {
-			return false; // no suspend
+			return false;
 		}
-		_sleepers.emplace_back(deadline, h);
+		// register timer event with scheduler
+		co::scheduler.add_event(std::make_unique<timer_event>(deadline, h));
 		return true; // suspend
 	}
 
@@ -492,12 +497,9 @@ int main() {
 	std::println("start");
 
 	// Keep looping until the scheduler becomes truly empty
-	while (true) {
-		co::delay_awaitable::tick();
+	while (not co::scheduler.done()) {
+		co::scheduler.poll_events();
 		co::scheduler.run_and_empty();
-		if (co::scheduler.empty() && !co::delay_awaitable::pending()) {
-			break; // no runnable coroutines and no sleepers
-		}
 	}
 
 	std::println("done");
