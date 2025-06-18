@@ -327,8 +327,9 @@ struct delay_awaitable {
 	void await_resume() const {}
 };
 
-auto delay(std::chrono::milliseconds ms) -> delay_awaitable {
-	return delay_awaitable{app::timer::monotonic_clock::now() + ms};
+template <typename Rep, typename Period>
+auto delay(std::chrono::duration<Rep, Period> ms) -> delay_awaitable {
+	return delay_awaitable{app::timer::monotonic_clock::now() + std::chrono::duration_cast<app::timer::monotonic_clock::duration>(ms)};
 }
 
 /**
@@ -476,33 +477,35 @@ accumulator<int> f() {
 }
 
 void_task fake_blink() {
+	using namespace std::chrono_literals;
 	std::println("fb0");
-	co_await delay(std::chrono::milliseconds{1'000});
+	co_await delay(1'000ms);
 	std::println("1");
-	co_await delay(std::chrono::milliseconds{1'000});
+	co_await delay(1'000ms);
 	std::println("2");
-	co_await delay(std::chrono::milliseconds{500});
+	co_await delay(500ms);
 	std::println("3");
-	co_await delay(std::chrono::milliseconds{250});
+	co_await delay(250ms);
 	std::println("4");
-	co_await delay(std::chrono::milliseconds{250});
+	co_await delay(250ms);
 	std::println("5");
-	co_await delay(std::chrono::milliseconds{3'000});
+	co_await delay(3'000ms);
 }
 
 void_task fake_blink_2() {
+	using namespace std::chrono_literals;
 	std::println("fb1");
-	co_await delay(std::chrono::milliseconds{2'000});
+	co_await delay(2'000ms);
 	std::println("a");
-	co_await delay(std::chrono::milliseconds{500});
+	co_await delay(500ms);
 	std::println("b");
-	co_await delay(std::chrono::milliseconds{2'000});
+	co_await delay(2'000ms);
 	std::println("c");
-	co_await delay(std::chrono::milliseconds{1'000});
+	co_await delay(1'000ms);
 	std::println("d");
-	co_await delay(std::chrono::milliseconds{250});
+	co_await delay(250ms);
 	std::println("e");
-	co_await delay(std::chrono::milliseconds{3'000});
+	co_await delay(3'000ms);
 }
 
 }
