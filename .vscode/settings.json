@@ -1,3 +1,4 @@
 {
-  "clangd.arguments": ["--query-driver=/usr/bin/clang"]
+  "clangd.arguments": ["--query-driver=/usr/bin/clang"],
+  "cursor.general.disableHttp2": true
 }

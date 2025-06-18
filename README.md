@@ -1,5 +1,7 @@
 # C++ 20 Coroutine
 
+> The most efficient, most scalable, most open/customizable coroutines of any programming language in existence
+
 - [C++ coroutines: Getting started with awaitable objects](https://devblogs.microsoft.com/oldnewthing/20191209-00/?p=103195)
 - [Coroutines: C++ vs Rust - Jonathan Müller - ACCU 2022](https://www.youtube.com/watch?v=aa43fYHgnfo)
 - [C++20 Coroutines - Complete Guide](https://www.youtube.com/watch?v=w-dmOHhBX9o)
@@ -12,10 +14,11 @@
 - [P1365R0 - Using Coroutine TS with zero dynamic allocations](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p1365r0.pdf)
 - [C++20 coroutines without heap allocation](https://pigweed.dev/docs/blog/05-coroutines.html)
 - [Build `folly::coro` with GCC](https://uvdn7.github.io/build-folly-coro)
+- [Exploring coroutines](https://blog.coffeetocode.com/2021/04/exploring-coroutines/)
 
 ## Talk
 
-- [CppCon 2015: Gor Nishanov "C++ Coroutines - a negative overhead abstraction"](https://www.youtube.com/watch?v=_fu0gx-xseY)
+- [CppCon 2015: Gor Nishanov "C++ Coroutines - a negative overhead abstraction"](https://www.youtube.com/watch?v=_fu0gx-xseY) ([code](https://github.com/GorNishanov/await/tree/master/2018_CppCon))
 - [CppCon 2017: Gor Nishanov "Naked coroutines live (with networking)"](https://www.youtube.com/watch?v=UL3TtTgt3oU)
 - [CppCon 2018: Gor Nishanov "Nano-coroutines to the Rescue! (Using Coroutines TS, of Course)"](https://www.youtube.com/watch?v=j9tlJAqMV7U)
 - [CppCon 2019: Lewis Baker "Structured Concurrency: Writing Safer Concurrent Code with Coroutines..."](https://www.youtube.com/watch?v=1Wy5sq3s2rg)

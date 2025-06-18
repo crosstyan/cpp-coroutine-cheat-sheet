@@ -1,10 +1,11 @@
 #include <algorithm>
+#include <exception>
 #include <format>
+#include <print>
 #include <future>
 #include <coroutine>
-#include <iostream>
+#include <deque>
 #include <type_traits>
-#include <variant>
 #include <vector>
 #include "app_timer.hpp"
 
@@ -37,6 +38,97 @@ struct std::coroutine_traits<std::future<R>, Args...> {
 };
 
 namespace co {
+/**
+ * @see https://github.com/GorNishanov/await/blob/327fe6a49cc91079b5fa4d6c5ea79b0d7dde53a4/2018_CppCon/src/coro_infra.h#L8-L34
+ */
+struct scheduler_queue {
+	static constexpr const int N = 256;
+	using coro_handle            = std::coroutine_handle<>;
+
+	uint32_t head = 0;
+	uint32_t tail = 0;
+	coro_handle arr[N];
+
+	void push_back(coro_handle h) {
+		arr[head] = h;
+		head      = (head + 1) % N;
+	}
+
+	coro_handle pop_front() {
+		auto result = arr[tail];
+		tail        = (tail + 1) % N;
+		return result;
+	}
+	/**
+	 * @note `coro_handle` might be nullptr
+	 */
+	auto try_pop_front() { return head != tail ? pop_front() : coro_handle{}; }
+
+	void run() {
+		while (auto h = try_pop_front()) {
+			h.resume();
+		}
+	}
+};
+
+struct simple_scheduler {
+	using coro_handle = std::coroutine_handle<>;
+	/**
+	 * @note Specialization std::coroutine_handle<void> erases the promise type.
+	 * It is convertible from other specializations.
+	 * @see https://en.cppreference.com/w/cpp/coroutine/coroutine_handle
+	 */
+	std::deque<coro_handle> _m_conts;
+
+	simple_scheduler() = default;
+
+	void push_back(coro_handle h) {
+		_m_conts.emplace_back(h);
+	}
+
+	coro_handle try_pop_front() {
+		if (_m_conts.empty()) {
+			return coro_handle{};
+		}
+		auto result = _m_conts.front();
+		_m_conts.pop_front();
+		return result;
+	}
+
+
+	/**
+	 * @note this function would run every coroutine in the queue once, the
+	 * queue push (won't check if it's done or not, the coroutine resume would
+	 * execute else where)
+	 */
+	void run_and_empty() {
+		while (auto h = try_pop_front()) {
+			h.resume();
+		}
+	};
+
+	/**
+	 * @brief run the coroutine and ONLY remove the done ones
+	 */
+	void run_only_remove_done() {
+		std::vector<coro_handle> to_remove{};
+		for (auto &cont : _m_conts) {
+			if (cont.done()) {
+				to_remove.emplace_back(cont);
+			} else {
+				cont.resume();
+			}
+		}
+		for (auto &cont : to_remove) {
+			_m_conts.erase(std::ranges::remove(_m_conts, cont).begin(), _m_conts.end());
+		}
+	}
+};
+
+
+inline simple_scheduler scheduler;
+
+
 template <typename T>
 	requires std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T>
 struct box {
@@ -89,7 +181,7 @@ struct box {
 			return box{Handle::from_promise(*this)};
 		};
 		[[noreturn]]
-		void unhandled_exception() { throw; }
+		void unhandled_exception() { std::terminate(); }
 
 		/** properties */
 		std::optional<T> inner;
@@ -108,6 +200,96 @@ private:
 	/** end of properties */
 };
 
+/**
+ * @brief same as `box` but use `shared_ptr` to store
+ * the content of value, so that the coroutine frame could be auto-destroyed
+ * with `suspend_never` in `final_suspend`
+ */
+template <typename T>
+	requires std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T>
+struct sbox {
+	struct promise_type;
+	using Handle = std::coroutine_handle<promise_type>;
+
+	/** constructor etc. */
+	explicit sbox(std::shared_ptr<T> content) : _content(std::move(content)) {}
+	~sbox()                       = default;
+	sbox(const sbox &)            = delete;
+	sbox &operator=(const sbox &) = delete;
+	sbox(sbox &&other) noexcept : _content(std::move(other._content)) {}
+	sbox &operator=(sbox &&other) noexcept {
+		if (this != &other) {
+			_content = std::move(other._content);
+		}
+		return *this;
+	}
+
+	/** promise type implementation */
+	struct promise_type {
+		std::suspend_never initial_suspend() noexcept { return {}; }
+		/**
+		 * @note automatic cleanup
+		 */
+		std::suspend_never final_suspend() noexcept { return {}; }
+
+		void return_value(T value) {
+			*_promise_content = value;
+		}
+		auto get_return_object() -> sbox<T> {
+			_promise_content = std::make_shared<T>();
+			return sbox{_promise_content};
+		};
+		[[noreturn]]
+		void unhandled_exception() { std::terminate(); }
+
+		/** properties */
+
+		/**
+		 * @note when the coroutine frame inited, it defaults to a nullptr
+		 * would be initialized by `get_return_object`
+		 */
+		std::shared_ptr<T> _promise_content;
+	};
+
+	std::optional<T> get() {
+		if (not _content) {
+			return std::nullopt;
+		}
+		return *_content;
+	}
+
+private:
+	/** properties */
+	std::shared_ptr<T> _content;
+	/** end of properties */
+};
+
+struct delay_awaitable {
+	using Handle     = std::coroutine_handle<>;
+	using time_point = app::timer::monotonic_clock::time_point;
+	time_point _deadline;
+
+	bool await_ready() const {
+		return app::timer::monotonic_clock::now() >= _deadline;
+	}
+
+	auto await_suspend(Handle h) {
+		auto &q = scheduler;
+		q.push_back(h);
+		return q.try_pop_front();
+	}
+
+	void await_resume() const {}
+};
+
+auto delay(std::chrono::milliseconds ms) -> delay_awaitable {
+	return delay_awaitable{app::timer::monotonic_clock::now() + ms};
+}
+
+/**
+ * @brief a dumb accumulator that accumulate value each yield
+ * @note this is NOT a generic generator
+ */
 template <typename T>
 	requires std::is_arithmetic_v<T> &&
 			 std::is_default_constructible_v<T> &&
@@ -146,9 +328,7 @@ struct accumulator {
 	struct promise_type {
 		std::suspend_never initial_suspend() noexcept { return {}; }
 		/**
-		 * @note automatic cleanup
-		 * @note use `suspend_always` if you need the coroutine frame not being
-		 * destroyed
+		 * @note coroutine frame won't be destroyed automatically
 		 */
 		std::suspend_always final_suspend() noexcept { return {}; }
 
@@ -179,7 +359,7 @@ struct accumulator {
 			return accumulator{_promise_content, Handle::from_promise(*this)};
 		};
 		[[noreturn]]
-		void unhandled_exception() { throw; }
+		void unhandled_exception() { std::terminate(); }
 
 		/** properties */
 
@@ -235,38 +415,24 @@ accumulator<int> f() {
 	co_return 42;
 }
 
+accumulator<int> fake_blink() {
+	std::println("s");
+	co_await delay(std::chrono::milliseconds{1'000});
+	std::println("1");
+	co_await delay(std::chrono::milliseconds{1'000});
+	std::println("2");
+	co_await delay(std::chrono::milliseconds{500});
+	std::println("3");
+	co_await delay(std::chrono::milliseconds{250});
+	std::println("4");
+	co_await delay(std::chrono::milliseconds{250});
+	co_return 0;
+}
+
 /**
  * we haven't touch awaitable yet
  * @see https://devblogs.microsoft.com/oldnewthing/20191209-00/?p=103195
  */
-
-struct simple_scheduler {
-	/**
-	 * @note Specialization std::coroutine_handle<void> erases the promise type.
-	 * It is convertible from other specializations.
-	 * @see https://en.cppreference.com/w/cpp/coroutine/coroutine_handle
-	 */
-	std::vector<std::coroutine_handle<>> _m_conts;
-
-	simple_scheduler() = default;
-
-	void schedule(std::coroutine_handle<> cont) {
-		_m_conts.emplace_back(cont);
-	}
-
-	/**
-	 * @note should be called in a loop
-	 */
-	void iterate() {
-		for (auto &cont : _m_conts) {
-			if (cont.done()) {
-				_m_conts.erase(std::ranges::remove(_m_conts, cont).begin(), _m_conts.end());
-			} else {
-				cont.resume();
-			}
-		}
-	};
-};
 }
 
 int main() {
