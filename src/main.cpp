@@ -9,12 +9,9 @@
 #include <vector>
 #include "app_timer.hpp"
 
-
-/** std::coroutine_traits<co_ret_t, ...>
- * @see https://en.cppreference.com/w/cpp/coroutine/coroutine_traits
- */
+namespace std {
 template <typename R, typename... Args>
-struct std::coroutine_traits<std::future<R>, Args...> {
+struct coroutine_traits<std::future<R>, Args...> {
 	struct promise_type {
 		std::promise<R> p;
 
@@ -36,6 +33,7 @@ struct std::coroutine_traits<std::future<R>, Args...> {
 		}
 	};
 };
+}
 
 namespace co {
 /**
@@ -95,6 +93,11 @@ struct simple_scheduler {
 		return result;
 	}
 
+	/**
+	 * @brief check if there are pending coroutine handles in the queue
+	 */
+	[[nodiscard]]
+	bool empty() const noexcept { return _m_conts.empty(); }
 
 	/**
 	 * @note this function would run every coroutine in the queue once, the
@@ -264,19 +267,56 @@ private:
 	/** end of properties */
 };
 
+
+/**
+ * we haven't touch awaitable yet
+ * @see https://devblogs.microsoft.com/oldnewthing/20191209-00/?p=103195
+ */
+
+
 struct delay_awaitable {
 	using Handle     = std::coroutine_handle<>;
 	using time_point = app::timer::monotonic_clock::time_point;
-	time_point _deadline;
 
-	bool await_ready() const {
-		return app::timer::monotonic_clock::now() >= _deadline;
+	// ------------------------------------------------------------------
+	// global sleep-list management (kept inside the awaitable type itself)
+	// ------------------------------------------------------------------
+	static inline std::vector<std::pair<time_point, Handle>> _sleepers{};
+
+	static void tick() {
+		auto now = app::timer::monotonic_clock::now();
+		auto &q  = scheduler;
+		auto it  = _sleepers.begin();
+		while (it != _sleepers.end()) {
+			if (now >= it->first) {
+				q.push_back(it->second);
+				it = _sleepers.erase(it);
+			} else {
+				++it;
+			}
+		}
 	}
 
-	auto await_suspend(Handle h) {
-		auto &q = scheduler;
-		q.push_back(h);
-		return q.try_pop_front();
+	static bool pending() { return not _sleepers.empty(); }
+
+	// ------------------------------------------------------------------
+	// instance part
+	// ------------------------------------------------------------------
+	time_point deadline;
+
+	[[nodiscard]]
+	bool is_ready() const {
+		return app::timer::monotonic_clock::now() >= deadline;
+	}
+
+	bool await_ready() const { return is_ready(); }
+
+	bool await_suspend(Handle h) {
+		if (is_ready()) {
+			return false; // no suspend
+		}
+		_sleepers.emplace_back(deadline, h);
+		return true; // suspend
 	}
 
 	void await_resume() const {}
@@ -401,6 +441,21 @@ private:
 	/** end of properties */
 };
 
+
+/**
+ * @brief a `nothing`, just for the sake of being able to use `co_await`
+ * @see https://en.cppreference.com/w/cpp/language/coroutines.html
+ */
+struct void_task {
+	struct promise_type {
+		void_task get_return_object() { return {}; }
+		std::suspend_never initial_suspend() { return {}; }
+		std::suspend_never final_suspend() noexcept { return {}; }
+		void return_void() {}
+		void unhandled_exception() {}
+	};
+};
+
 accumulator<int> f() {
 	co_yield 1;
 	co_yield 2;
@@ -415,8 +470,8 @@ accumulator<int> f() {
 	co_return 42;
 }
 
-accumulator<int> fake_blink() {
-	std::println("s");
+void_task fake_blink() {
+	std::println("i");
 	co_await delay(std::chrono::milliseconds{1'000});
 	std::println("1");
 	co_await delay(std::chrono::milliseconds{1'000});
@@ -426,20 +481,24 @@ accumulator<int> fake_blink() {
 	co_await delay(std::chrono::milliseconds{250});
 	std::println("4");
 	co_await delay(std::chrono::milliseconds{250});
-	co_return 0;
+	std::println("5");
+	co_await delay(std::chrono::milliseconds{3'000});
 }
 
-/**
- * we haven't touch awaitable yet
- * @see https://devblogs.microsoft.com/oldnewthing/20191209-00/?p=103195
- */
 }
 
 int main() {
-	auto b = co::f();
-	std::println("{}", b.get().value_or(0));
-	while (b.resume()) {
-		std::println("{}", b.get().value_or(0));
+	co::fake_blink();
+	std::println("start");
+
+	// Keep looping until the scheduler becomes truly empty
+	while (true) {
+		co::delay_awaitable::tick();
+		co::scheduler.run_and_empty();
+		if (co::scheduler.empty() && !co::delay_awaitable::pending()) {
+			break; // no runnable coroutines and no sleepers
+		}
 	}
+
 	std::println("done");
 }
