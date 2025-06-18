@@ -476,7 +476,7 @@ accumulator<int> f() {
 }
 
 void_task fake_blink() {
-	std::println("i");
+	std::println("fb0");
 	co_await delay(std::chrono::milliseconds{1'000});
 	std::println("1");
 	co_await delay(std::chrono::milliseconds{1'000});
@@ -490,10 +490,26 @@ void_task fake_blink() {
 	co_await delay(std::chrono::milliseconds{3'000});
 }
 
+void_task fake_blink_2() {
+	std::println("fb1");
+	co_await delay(std::chrono::milliseconds{2'000});
+	std::println("a");
+	co_await delay(std::chrono::milliseconds{500});
+	std::println("b");
+	co_await delay(std::chrono::milliseconds{2'000});
+	std::println("c");
+	co_await delay(std::chrono::milliseconds{1'000});
+	std::println("d");
+	co_await delay(std::chrono::milliseconds{250});
+	std::println("e");
+	co_await delay(std::chrono::milliseconds{3'000});
+}
+
 }
 
 int main() {
 	co::fake_blink();
+	co::fake_blink_2();
 	std::println("start");
 
 	// Keep looping until the scheduler becomes truly empty
