@@ -123,12 +123,7 @@ namespace co {
  * @see co::timer_pollable
  */
 struct timer_awaitable {
-	using any_handle      = std::coroutine_handle<>;
-	using pollable_handle = co::pollable_co_handle;
-	using concrete_handle = std::coroutine_handle<pollable_task::promise_type>;
-	using time_point      = app::timer::monotonic_clock::time_point;
-	using IPollable       = scheduler::IPollable;
-	using scheduler       = co::scheduler::simple_scheduler;
+	using time_point = app::timer::monotonic_clock::time_point;
 
 	[[nodiscard]]
 	bool is_ready() const {
@@ -137,7 +132,7 @@ struct timer_awaitable {
 
 	bool await_ready() const { return is_ready(); }
 
-	bool await_suspend(concrete_handle hdl) {
+	bool await_suspend(pollable_co_handle hdl) {
 		if (is_ready()) {
 			return false;
 		}
@@ -149,7 +144,7 @@ struct timer_awaitable {
 		 * awaitable just live in `co_await` realm?
 		 */
 		hdl.promise().pollable = std::make_unique<co::timer_pollable>(deadline);
-		app::global::scheduler.push_back(hdl.promise().coroutine_handle());
+		app::global::scheduler.push_back(hdl);
 		return true;
 	}
 
