@@ -10,6 +10,10 @@
 #include <memory>
 #include "app_timer.hpp"
 
+/**
+ * @brief a demo that show how to attach a `promise_type` to `std::future`
+ * with `coroutine_traits`
+ */
 namespace std {
 template <typename R, typename... Args>
 struct coroutine_traits<std::future<R>, Args...> {
@@ -36,7 +40,7 @@ struct coroutine_traits<std::future<R>, Args...> {
 };
 }
 
-namespace co {
+namespace co::scheduler {
 /**
  * @see https://github.com/GorNishanov/await/blob/327fe6a49cc91079b5fa4d6c5ea79b0d7dde53a4/2018_CppCon/src/coro_infra.h#L8-L34
  */
@@ -145,11 +149,15 @@ struct simple_scheduler {
 	std::deque<coro_handle> _conts;
 	std::vector<std::unique_ptr<poll_event>> _events;
 };
+}
 
 
-inline simple_scheduler scheduler;
+namespace app::global {
+inline co::scheduler::simple_scheduler scheduler;
+}
 
 
+namespace co {
 template <typename T>
 	requires std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T>
 struct box {
@@ -295,8 +303,9 @@ private:
 struct delay_awaitable {
 	using Handle     = std::coroutine_handle<>;
 	using time_point = app::timer::monotonic_clock::time_point;
+	using scheduler  = co::scheduler::simple_scheduler;
 
-	struct timer_event : simple_scheduler::poll_event {
+	struct timer_event : scheduler::poll_event {
 		time_point deadline;
 		timer_event(time_point d, Handle h) : deadline(d) {
 			handle = h;
@@ -322,7 +331,7 @@ struct delay_awaitable {
 			return false;
 		}
 		// register timer event with scheduler
-		co::scheduler.add_event(std::make_unique<timer_event>(deadline, h));
+		app::global::scheduler.add_event(std::make_unique<timer_event>(deadline, h));
 		return true; // suspend
 	}
 
@@ -513,14 +522,15 @@ void_task fake_blink_2() {
 }
 
 int main() {
+	auto &scheduler = app::global::scheduler;
 	co::fake_blink();
 	co::fake_blink_2();
 	std::println("start");
 
-	// Keep looping until the scheduler becomes truly empty
-	while (not co::scheduler.done()) {
-		co::scheduler.poll_events();
-		co::scheduler.run_and_empty();
+	// keep looping until the scheduler becomes truly empty
+	while (not scheduler.done()) {
+		scheduler.poll_events();
+		scheduler.run_and_empty();
 	}
 
 	std::println("done");
