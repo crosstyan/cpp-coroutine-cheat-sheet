@@ -9,17 +9,60 @@
 
 namespace co::scheduler {
 struct IPollable { // NOLINT(cppcoreguidelines-special-member-functions) virtual interface
-	using pollable_handle = std::coroutine_handle<IPollable>;
 	[[nodiscard]]
-	virtual pollable_handle promise_handle() const = 0;
-	[[nodiscard]]
-	virtual bool poll_ready() const = 0;
-	virtual ~IPollable()            = default;
+	virtual bool poll() const = 0;
+	virtual ~IPollable()      = default;
+};
+}
+
+namespace co {
+
+/**
+ * @brief a `nothing`, just for the sake of being able to use `co_await`
+ * @see https://en.cppreference.com/w/cpp/language/coroutines.html
+ */
+struct pollable_task {
+	struct promise_type : scheduler::IPollable {
+		using any_handle      = std::coroutine_handle<>;
+		using pollable_handle = std::coroutine_handle<pollable_task::promise_type>;
+
+		std::suspend_never initial_suspend() { return {}; }
+		std::suspend_never final_suspend() noexcept { return {}; }
+		void return_void() {}
+		pollable_task get_return_object() { return {}; }
+		void unhandled_exception() { std::terminate(); }
+
+		[[nodiscard]]
+		pollable_handle promise_handle() const {
+			return pollable_handle::from_promise(
+				const_cast<promise_type &>(*this)); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+		}
+
+		[[nodiscard]]
+		bool poll() const override { return pollable->poll(); }
+
+		/** properties */
+		std::unique_ptr<IPollable> pollable;
+	};
 };
 
+struct time_pollable : scheduler::IPollable {
+	using time_point = app::timer::monotonic_clock::time_point;
+	time_point deadline;
+
+	time_pollable(time_point deadline) : deadline(deadline) {}
+
+	[[nodiscard]]
+	bool poll() const override { return app::timer::monotonic_clock::now() >= deadline; }
+};
+using pollable_handle = std::coroutine_handle<pollable_task::promise_type>;
+}
+
+
+namespace co::scheduler {
 struct simple_scheduler {
 	using any_handle      = std::coroutine_handle<>;
-	using pollable_handle = IPollable::pollable_handle;
+	using pollable_handle = co::pollable_handle;
 	/**
 	 * @note Specialization std::coroutine_handle<void> erases the promise type.
 	 * It is convertible from other specializations.
@@ -44,7 +87,7 @@ struct simple_scheduler {
 		auto it = _pollables.begin();
 		while (it != _pollables.end()) {
 			auto &pollable = (*it).promise();
-			if (pollable.poll_ready()) {
+			if (pollable.poll()) {
 				pollable.promise_handle().resume();
 				it = _pollables.erase(it);
 			} else {
@@ -74,39 +117,10 @@ namespace co {
  */
 
 
-/**
- * @brief a `nothing`, just for the sake of being able to use `co_await`
- * @see https://en.cppreference.com/w/cpp/language/coroutines.html
- */
-struct delay_task {
-	struct promise_type : scheduler::IPollable {
-		using any_handle      = std::coroutine_handle<>;
-		using pollable_handle = std::coroutine_handle<IPollable>;
-		using time_point      = app::timer::monotonic_clock::time_point;
-
-		std::suspend_never initial_suspend() { return {}; }
-		std::suspend_never final_suspend() noexcept { return {}; }
-		void return_void() {}
-		delay_task get_return_object() { return {}; }
-		void unhandled_exception() { std::terminate(); }
-
-		[[nodiscard]]
-		pollable_handle promise_handle() const override {
-			return pollable_handle::from_promise(
-				const_cast<promise_type &>(*this)); // NOLINT(cppcoreguidelines-pro-type-const-cast)
-		}
-		[[nodiscard]]
-		bool poll_ready() const override { return app::timer::monotonic_clock::now() >= deadline; }
-
-		/** properties */
-		time_point deadline;
-	};
-};
-
 struct delay_awaitable {
 	using any_handle      = std::coroutine_handle<>;
-	using pollable_handle = scheduler::IPollable::pollable_handle;
-	using concrete_handle = std::coroutine_handle<delay_task::promise_type>;
+	using pollable_handle = co::pollable_handle;
+	using concrete_handle = std::coroutine_handle<pollable_task::promise_type>;
 	using time_point      = app::timer::monotonic_clock::time_point;
 	using IPollable       = scheduler::IPollable;
 	using scheduler       = co::scheduler::simple_scheduler;
@@ -127,8 +141,8 @@ struct delay_awaitable {
 		// its deadline
 		//
 		// awaitable just live in `co_await` realm?
-		hdl.promise().deadline = deadline;
-		app::global::scheduler.push_back(std::coroutine_handle<IPollable>::from_address(hdl.address()));
+		hdl.promise().pollable = std::make_unique<co::time_pollable>(deadline);
+		app::global::scheduler.push_back(hdl.promise().promise_handle());
 		return true;
 	}
 
@@ -143,7 +157,7 @@ auto delay(std::chrono::duration<Rep, Period> ms) -> delay_awaitable {
 	return delay_awaitable{app::timer::monotonic_clock::now() + std::chrono::duration_cast<app::timer::monotonic_clock::duration>(ms)};
 }
 
-delay_task fake_blink() {
+pollable_task fake_blink() {
 	using namespace std::chrono_literals;
 	static constexpr auto TASK_IDX = 0;
 	std::println("s{}", TASK_IDX);
@@ -168,7 +182,7 @@ delay_task fake_blink() {
 	std::println("e{}", TASK_IDX);
 }
 
-delay_task fake_blink_2() {
+pollable_task fake_blink_2() {
 	using namespace std::chrono_literals;
 	static constexpr auto TASK_IDX = 1;
 	std::println("s{}", TASK_IDX);
