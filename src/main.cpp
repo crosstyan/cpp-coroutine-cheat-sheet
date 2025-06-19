@@ -33,7 +33,7 @@ struct pollable_task {
 		void unhandled_exception() { std::terminate(); }
 
 		[[nodiscard]]
-		pollable_handle promise_handle() const {
+		pollable_handle coroutine_handle() const {
 			return pollable_handle::from_promise(
 				const_cast<promise_type &>(*this)); // NOLINT(cppcoreguidelines-pro-type-const-cast)
 		}
@@ -46,23 +46,23 @@ struct pollable_task {
 	};
 };
 
-struct time_pollable : scheduler::IPollable {
+struct timer_pollable : scheduler::IPollable {
 	using time_point = app::timer::monotonic_clock::time_point;
 	time_point deadline;
 
-	time_pollable(time_point deadline) : deadline(deadline) {}
+	timer_pollable(time_point deadline) : deadline(deadline) {}
 
 	[[nodiscard]]
 	bool poll() const override { return app::timer::monotonic_clock::now() >= deadline; }
 };
-using pollable_handle = std::coroutine_handle<pollable_task::promise_type>;
+using pollable_co_handle = std::coroutine_handle<pollable_task::promise_type>;
 }
 
 
 namespace co::scheduler {
 struct simple_scheduler {
-	using any_handle      = std::coroutine_handle<>;
-	using pollable_handle = co::pollable_handle;
+	using any_handle         = std::coroutine_handle<>;
+	using pollable_co_handle = co::pollable_co_handle;
 	/**
 	 * @note Specialization std::coroutine_handle<void> erases the promise type.
 	 * It is convertible from other specializations.
@@ -71,8 +71,8 @@ struct simple_scheduler {
 
 	simple_scheduler() = default;
 
-	void push_back(pollable_handle pollable) {
-		_pollables.emplace_back(pollable);
+	void push_back(pollable_co_handle pollable) {
+		_coroutines.emplace_back(pollable);
 	}
 
 	/**
@@ -82,14 +82,16 @@ struct simple_scheduler {
 		using namespace std::chrono_literals;
 		static app::timer::Instant instant{};
 		if (instant.mut_every(1'000ms)) {
-			std::println("len(coro)={}", _pollables.size());
+			std::println("len(coro)={}", _coroutines.size());
 		}
-		auto it = _pollables.begin();
-		while (it != _pollables.end()) {
-			auto &pollable = (*it).promise();
+		auto it = _coroutines.begin();
+		while (it != _coroutines.end()) {
+			auto &coroutine = *it;
+			auto &pollable  = coroutine.promise();
 			if (pollable.poll()) {
-				pollable.promise_handle().resume();
-				it = _pollables.erase(it);
+				coroutine.resume();
+				// should be re-pushed by awaitable
+				it = _coroutines.erase(it);
 			} else {
 				++it;
 			}
@@ -97,10 +99,10 @@ struct simple_scheduler {
 	}
 
 	[[nodiscard]]
-	bool empty() const noexcept { return _pollables.empty(); }
+	bool empty() const noexcept { return _coroutines.empty(); }
 
 	/** properties */
-	std::deque<pollable_handle> _pollables;
+	std::deque<pollable_co_handle> _coroutines;
 };
 }
 
@@ -117,9 +119,12 @@ namespace co {
  */
 
 
-struct delay_awaitable {
+/**
+ * @see co::timer_pollable
+ */
+struct timer_awaitable {
 	using any_handle      = std::coroutine_handle<>;
-	using pollable_handle = co::pollable_handle;
+	using pollable_handle = co::pollable_co_handle;
 	using concrete_handle = std::coroutine_handle<pollable_task::promise_type>;
 	using time_point      = app::timer::monotonic_clock::time_point;
 	using IPollable       = scheduler::IPollable;
@@ -136,13 +141,15 @@ struct delay_awaitable {
 		if (is_ready()) {
 			return false;
 		}
-		// assign the deadline to the promise
-		// otherwise, the `promise_type` wouldn't even know
-		// its deadline
-		//
-		// awaitable just live in `co_await` realm?
-		hdl.promise().pollable = std::make_unique<co::time_pollable>(deadline);
-		app::global::scheduler.push_back(hdl.promise().promise_handle());
+		/**
+		 * assign the deadline to the promise
+		 * otherwise, the `promise_type` wouldn't even know
+		 * its deadline
+		 *
+		 * awaitable just live in `co_await` realm?
+		 */
+		hdl.promise().pollable = std::make_unique<co::timer_pollable>(deadline);
+		app::global::scheduler.push_back(hdl.promise().coroutine_handle());
 		return true;
 	}
 
@@ -152,9 +159,13 @@ struct delay_awaitable {
 	time_point deadline;
 };
 
+/**
+ * @brief create a timer awaitable
+ */
 template <typename Rep, typename Period>
-auto delay(std::chrono::duration<Rep, Period> ms) -> delay_awaitable {
-	return delay_awaitable{app::timer::monotonic_clock::now() + std::chrono::duration_cast<app::timer::monotonic_clock::duration>(ms)};
+auto delay(std::chrono::duration<Rep, Period> duration) -> timer_awaitable {
+	return timer_awaitable{app::timer::monotonic_clock::now() +
+						   std::chrono::duration_cast<app::timer::monotonic_clock::duration>(duration)};
 }
 
 pollable_task fake_blink() {
