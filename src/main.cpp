@@ -4,6 +4,7 @@
 #include <coroutine>
 #include <deque>
 #include <source_location>
+#include "app_instant.hpp"
 #include "app_timer.hpp"
 
 namespace co::scheduler {
@@ -35,6 +36,11 @@ struct simple_scheduler {
 	 * @brief iterate over the pollables
 	 */
 	void poll_once() {
+		using namespace std::chrono_literals;
+		static app::timer::Instant instant{};
+		if (instant.mut_every(1'000ms)) {
+			std::println("len(coro)={}", _pollables.size());
+		}
 		auto it = _pollables.begin();
 		while (it != _pollables.end()) {
 			auto &pollable = (*it).promise();
@@ -139,9 +145,9 @@ auto delay(std::chrono::duration<Rep, Period> ms) -> delay_awaitable {
 
 delay_task fake_blink() {
 	using namespace std::chrono_literals;
-	std::println("s0");
+	static constexpr auto TASK_IDX = 0;
+	std::println("s{}", TASK_IDX);
 	constexpr auto log = [](uint32_t line) {
-		constexpr auto TASK_IDX = 0;
 		std::println("[{}ms] {} ({})",
 					 app::timer::monotonic_clock::now().time_since_epoch().count(),
 					 line,
@@ -159,13 +165,14 @@ delay_task fake_blink() {
 	log(std::source_location::current().line());
 	co_await delay(3'000ms);
 	log(std::source_location::current().line());
+	std::println("e{}", TASK_IDX);
 }
 
 delay_task fake_blink_2() {
 	using namespace std::chrono_literals;
-	std::println("s1");
+	static constexpr auto TASK_IDX = 1;
+	std::println("s{}", TASK_IDX);
 	constexpr auto log = [](uint32_t line) {
-		constexpr auto TASK_IDX = 1;
 		std::println("[{}ms] {} ({})",
 					 app::timer::monotonic_clock::now().time_since_epoch().count(),
 					 line,
@@ -183,6 +190,7 @@ delay_task fake_blink_2() {
 	log(std::source_location::current().line());
 	co_await delay(3'000ms);
 	log(std::source_location::current().line());
+	std::println("e{}", TASK_IDX);
 }
 
 }
