@@ -77,7 +77,6 @@ struct simple_scheduler {
 	 * It is convertible from other specializations.
 	 * @see https://en.cppreference.com/w/cpp/coroutine/coroutine_handle
 	 */
-	std::deque<coro_handle> _m_conts;
 
 	// generic event list
 	struct poll_event { // NOLINT(cppcoreguidelines-special-member-functions) virtual interface
@@ -86,7 +85,8 @@ struct simple_scheduler {
 		virtual bool poll_ready() const = 0; // true when event is ready
 		virtual ~poll_event()           = default;
 	};
-	std::vector<std::unique_ptr<poll_event>> _events;
+
+	simple_scheduler() = default;
 
 	void add_event(std::unique_ptr<poll_event> ev) {
 		_events.emplace_back(std::move(ev));
@@ -97,7 +97,7 @@ struct simple_scheduler {
 		while (it != _events.end()) {
 			if ((*it)->poll_ready()) {
 				// move ready coroutine to run queue
-				_m_conts.emplace_back((*it)->handle);
+				_conts.emplace_back((*it)->handle);
 				it = _events.erase(it);
 			} else {
 				++it;
@@ -108,18 +108,16 @@ struct simple_scheduler {
 	[[nodiscard]]
 	bool events_empty() const noexcept { return _events.empty(); }
 
-	simple_scheduler() = default;
-
 	void push_back(coro_handle h) {
-		_m_conts.emplace_back(h);
+		_conts.emplace_back(h);
 	}
 
 	coro_handle try_pop_front() {
-		if (_m_conts.empty()) {
+		if (_conts.empty()) {
 			return coro_handle{};
 		}
-		auto result = _m_conts.front();
-		_m_conts.pop_front();
+		auto result = _conts.front();
+		_conts.pop_front();
 		return result;
 	}
 
@@ -127,7 +125,7 @@ struct simple_scheduler {
 	 * @brief check if there are pending coroutine handles in the queue
 	 */
 	[[nodiscard]]
-	bool empty() const noexcept { return _m_conts.empty(); }
+	bool empty() const noexcept { return _conts.empty(); }
 
 	/**
 	 * @note this function would run every coroutine in the queue once, the
@@ -141,7 +139,11 @@ struct simple_scheduler {
 	};
 
 	[[nodiscard]]
-	bool done() const noexcept { return _m_conts.empty() && _events.empty(); }
+	bool done() const noexcept { return _conts.empty() && _events.empty(); }
+
+	/** properties */
+	std::deque<coro_handle> _conts;
+	std::vector<std::unique_ptr<poll_event>> _events;
 };
 
 
@@ -345,27 +347,27 @@ struct accumulator {
 	using Handle = std::coroutine_handle<promise_type>;
 
 	/** constructor etc. */
-	explicit accumulator(std::shared_ptr<T> content, Handle handle) : _content(std::move(content)), _m_coroutine(handle) {}
+	explicit accumulator(std::shared_ptr<T> content, Handle handle) : _content(std::move(content)), _coroutine(handle) {}
 	~accumulator() {
-		if (_m_coroutine) {
-			_m_coroutine.destroy();
+		if (_coroutine) {
+			_coroutine.destroy();
 		}
 	};
 	accumulator(const accumulator &)            = delete;
 	accumulator &operator=(const accumulator &) = delete;
-	accumulator(accumulator &&other) noexcept : _content(std::move(other._content)), _m_coroutine(other._m_coroutine) {
-		other._m_coroutine = {};
-		other._content     = {};
+	accumulator(accumulator &&other) noexcept : _content(std::move(other._content)), _coroutine(other._coroutine) {
+		other._coroutine = {};
+		other._content   = {};
 	}
 	accumulator &operator=(accumulator &&other) noexcept {
 		if (this != &other) {
-			if (_m_coroutine) {
-				_m_coroutine.destroy();
+			if (_coroutine) {
+				_coroutine.destroy();
 			}
-			_m_coroutine       = other._m_coroutine;
-			_content           = std::move(other._content);
-			other._m_coroutine = {};
-			other._content     = {};
+			_coroutine       = other._coroutine;
+			_content         = std::move(other._content);
+			other._coroutine = {};
+			other._content   = {};
 		}
 		return *this;
 	}
@@ -428,22 +430,22 @@ struct accumulator {
 	 * @return false if the coroutine is done
 	 */
 	bool resume() {
-		if (not _m_coroutine) {
+		if (not _coroutine) {
 			return false;
 		}
-		if (_m_coroutine.done()) {
-			_m_coroutine.destroy();
-			_m_coroutine = {};
+		if (_coroutine.done()) {
+			_coroutine.destroy();
+			_coroutine = {};
 			return false;
 		}
-		_m_coroutine.resume();
+		_coroutine.resume();
 		return true;
 	}
 
 private:
 	/** properties */
 	std::shared_ptr<T> _content;
-	Handle _m_coroutine;
+	Handle _coroutine;
 	/** end of properties */
 };
 
