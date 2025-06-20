@@ -16,7 +16,6 @@ struct IPollable { // NOLINT(cppcoreguidelines-special-member-functions) virtual
 }
 
 namespace co {
-
 /**
  * @brief a `nothing`, just for the sake of being able to use `co_await`
  * @see https://en.cppreference.com/w/cpp/language/coroutines.html
@@ -61,13 +60,13 @@ using pollable_co_handle = std::coroutine_handle<pollable_task::promise_type>;
 
 namespace co::scheduler {
 struct simple_scheduler {
-	using any_handle         = std::coroutine_handle<>;
-	using pollable_co_handle = co::pollable_co_handle;
 	/**
 	 * @note Specialization std::coroutine_handle<void> erases the promise type.
 	 * It is convertible from other specializations.
 	 * @see https://en.cppreference.com/w/cpp/coroutine/coroutine_handle
 	 */
+	using any_handle         = std::coroutine_handle<>;
+	using pollable_co_handle = co::pollable_co_handle;
 
 	simple_scheduler() = default;
 
@@ -80,9 +79,11 @@ struct simple_scheduler {
 	 */
 	void poll_once() {
 		using namespace std::chrono_literals;
-		static app::timer::Instant instant{};
+		static auto instant = app::timer::Instant::now();
 		if (instant.mut_every(1'000ms)) {
-			std::println("len(coro)={}", _coroutines.size());
+			std::println("[{}ms] len(coro)={}",
+						 app::timer::monotonic_clock::now().time_since_epoch().count(),
+						 _coroutines.size());
 		}
 		auto it = _coroutines.begin();
 		while (it != _coroutines.end()) {
@@ -114,13 +115,10 @@ inline co::scheduler::simple_scheduler scheduler;
 
 namespace co {
 /**
- * we haven't touch awaitable yet
- * @see https://devblogs.microsoft.com/oldnewthing/20191209-00/?p=103195
- */
-
-
-/**
+ * @note this awaitable only works with `co::pollable_task` coroutine
  * @see co::timer_pollable
+ * @see co::pollable_task
+ * @see https://devblogs.microsoft.com/oldnewthing/20191209-00/?p=103195
  */
 struct timer_awaitable {
 	using time_point = app::timer::monotonic_clock::time_point;
@@ -173,9 +171,9 @@ pollable_task fake_blink() {
 					 line,
 					 TASK_IDX);
 	};
-	co_await delay(1'000ms);
+	co_await delay(1s);
 	log(std::source_location::current().line());
-	co_await delay(1'000ms);
+	co_await delay(1s);
 	log(std::source_location::current().line());
 	co_await delay(500ms);
 	log(std::source_location::current().line());
@@ -183,7 +181,7 @@ pollable_task fake_blink() {
 	log(std::source_location::current().line());
 	co_await delay(250ms);
 	log(std::source_location::current().line());
-	co_await delay(3'000ms);
+	co_await delay(3s);
 	log(std::source_location::current().line());
 	std::println("e{}", TASK_IDX);
 }
@@ -198,21 +196,20 @@ pollable_task fake_blink_2() {
 					 line,
 					 TASK_IDX);
 	};
-	co_await delay(2'000ms);
+	co_await delay(2s);
 	log(std::source_location::current().line());
 	co_await delay(500ms);
 	log(std::source_location::current().line());
-	co_await delay(2'000ms);
+	co_await delay(2s);
 	log(std::source_location::current().line());
-	co_await delay(1'000ms);
+	co_await delay(1s);
 	log(std::source_location::current().line());
 	co_await delay(250ms);
 	log(std::source_location::current().line());
-	co_await delay(3'000ms);
+	co_await delay(3s);
 	log(std::source_location::current().line());
 	std::println("e{}", TASK_IDX);
 }
-
 }
 
 int main() {

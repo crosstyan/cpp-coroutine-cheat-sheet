@@ -22,6 +22,14 @@ public:
 	using milliseconds = std::chrono::milliseconds;
 	using ms_rep       = milliseconds::rep;
 
+	/**
+	 * @brief timepoint constructor
+	 */
+	Instant(time_point time) : time_(time) {}
+
+	/**
+	 * @brief now constructor
+	 */
 	Instant() {
 		this->time_ = clock::now();
 	}
