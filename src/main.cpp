@@ -1,3 +1,4 @@
+#include <cassert>
 #include <exception>
 #include <format>
 #include <print>
@@ -6,6 +7,83 @@
 #include <source_location>
 #include "app_instant.hpp"
 #include "app_timer.hpp"
+
+namespace co::allocator {
+/**
+ * @brief a simple memory pool
+ * @tparam S the size of maximum single element
+ * @tparam N the number of elements in the pool
+ * @note the total size of the pool is `S * N`
+ */
+template <std::size_t S, std::size_t N>
+struct pool {
+	constexpr static auto el_size  = S;
+	constexpr static auto el_count = N;
+
+	struct element {
+		std::byte data[S];
+		bool occupied;
+	};
+
+	pool() {
+		for (auto &e : _elements) {
+			e.occupied = false;
+		}
+	}
+
+	/**
+	 * @brief allocate the memory
+	 * @note this is not thread-safe
+	 * @note would return nullptr if the pool is full
+	 * @note debug mode coroutine size should be 168 bytes, release mode
+	 * coroutine size should be 48 bytes
+	 */
+	void *allocate(std::size_t size) noexcept {
+		if (size > el_size) {
+			return nullptr;
+		}
+		size_t i{};
+		for (auto &e : _elements) {
+			if (not e.occupied) {
+				std::println("[allocate] size={} (limit={}, index={})", size, el_size, i);
+				e.occupied = true;
+				return reinterpret_cast<void *>(e.data);
+			}
+			i += 1;
+		}
+		return nullptr;
+	}
+
+	/**
+	 * @brief deallocate the memory
+	 * @note this is not thread-safe
+	 * @note would terminate if the pointer is not allocated by this pool
+	 */
+	void deallocate(void *ptr) noexcept {
+		size_t i{};
+		for (auto &e : _elements) {
+			auto p = reinterpret_cast<void *>(e.data);
+			if (p == ptr) {
+				e.occupied = false;
+				std::println("[deallocate] index={}", i);
+				return;
+			}
+			i += 1;
+		}
+		std::terminate();
+	}
+
+private:
+	std::array<element, N> _elements;
+};
+}
+
+namespace app::global {
+/**
+ * @brief the global coroutine memory pool
+ */
+inline co::allocator::pool<256, 8> pool{};
+}
 
 namespace co::scheduler {
 struct IPollable { // NOLINT(cppcoreguidelines-special-member-functions) virtual interface
@@ -39,6 +117,16 @@ struct pollable_task {
 
 		[[nodiscard]]
 		bool poll() const override { return pollable->poll(); }
+
+		void *operator new(std::size_t size) noexcept {
+			auto p = app::global::pool.allocate(size);
+			assert(p != nullptr);
+			return p;
+		}
+
+		void operator delete(void *ptr) noexcept {
+			app::global::pool.deallocate(ptr);
+		}
 
 		/** properties */
 		std::unique_ptr<IPollable> pollable;

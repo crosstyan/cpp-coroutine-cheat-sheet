@@ -1,5 +1,5 @@
 {
   "clangd.arguments": ["--query-driver=/usr/bin/clang"],
   "cursor.general.disableHttp2": true,
-  "cSpell.words": ["pollables"]
+  "cSpell.words": ["INTERPROCEDURAL", "pollables"]
 }
